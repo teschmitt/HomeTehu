@@ -1,20 +1,26 @@
 #include <Arduino.h>
+#include <FS.h>
 
 class Configuration
 {
 private:
-    const char *filepath = "/config.json";
+    const char *_filepath = "/config.json";
+    fs::FS _fs;
 
     // preference data:
     bool debug;
     IPAddress MQTTHost;
-    String sensorType, stationName, wifiName, wifiPassword;
+    String sensorType = "DHT22";
+    String stationName, wifiName, wifiPassword;
     uint8_t sensorGPIOPort;
-    uint16_t MQTTPort;
-    uint64_t sleepDuration;
+    uint16_t MQTTPort = 1883;
+
+    // all durations are specified in seconds
+    uint16_t wifiTimeout = 60;
+    uint64_t sleepDuration = 300;
 
 public:
-    Configuration(/* args */);
+    Configuration(fs::FS &fs);
     ~Configuration();
 
     const bool read();
@@ -29,4 +35,5 @@ public:
     const String getWifiPassword() const { return wifiPassword; }
     const uint64_t getSleepDuration() const { return sleepDuration; }
     const unsigned int getSensorGPIOPort() const { return sensorGPIOPort; }
+    const uint16_t getWifiTimeout() const { return wifiTimeout; }
 };

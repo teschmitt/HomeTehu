@@ -1,22 +1,13 @@
 #include <Arduino.h>
 #include <ArduinoJson.h>
+#include <FS.h>
 #include <IPAddress.h>
 #include <LittleFS.h>
 
 #include "Configuration.hpp"
 
-Configuration::Configuration(/* args */)
+Configuration::Configuration(fs::FS &fs): _fs{fs}
 {
-    randomSeed(micros());
-    // TODO: perform begin in while loop and timeout after a while
-    if (LittleFS.begin())
-    {
-        Serial.println("Dateisystem: initialisiert");
-    }
-    else
-    {
-        Serial.println("Dateisystem: Fehler beim initialisieren");
-    }
 }
 
 Configuration::~Configuration()
@@ -25,7 +16,7 @@ Configuration::~Configuration()
 
 const bool Configuration::read()
 {
-    File configFile = LittleFS.open(filepath, "r");
+    File configFile = _fs.open(_filepath, "r");
 
     if (!configFile)
     {
@@ -48,6 +39,7 @@ const bool Configuration::read()
     MQTTHost = ipaddr;
 
     MQTTPort = configJSON["mqtt_port"];
+    wifiTimeout = configJSON["wifi_timeout"].as<uint16_t>();
     sensorGPIOPort = configJSON["sensor_gpioport"];
     sensorType = configJSON["sensor_type"].as<String>();
     stationName = configJSON["station_name"].as<String>();
