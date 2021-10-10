@@ -5,7 +5,7 @@
 class SensorBuffer
 {
 private:
-    const char *_bufferPath = "/sensorbuffer.json";
+    const char *_bufferPath = "/sensorbuffer.jsonl";
     const char *_lastOffsetPath = "/lastoffset";
     uint32_t _lastOffset = 0;
 
@@ -17,9 +17,9 @@ public:
     SensorBuffer(fs::FS &fs);
     ~SensorBuffer();
 
-    const bool append(String entry);
+    const bool append(DynamicJsonDocument &doc, uint32_t offset);
     const uint32_t getLastOffset();
     const uint32_t incrementOffset(uint32_t incr);
     const bool bufferExists();
-    const bool read();
+    const DynamicJsonDocument getBuffer();
 };

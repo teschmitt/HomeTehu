@@ -26,12 +26,14 @@ const bool Configuration::read()
 
     DynamicJsonDocument configJSON(1024);
     DeserializationError e = deserializeJson(configJSON, configFile);
+    configFile.close();
+
     if (e)
     {
         Serial.println("ERROR: Deserialization. Got a big bad error!");
         // TODO Error handling
     }
-    
+
     debug = configJSON["debug"];
 
     IPAddress ipaddr;
@@ -45,9 +47,8 @@ const bool Configuration::read()
     stationName = configJSON["station_name"].as<String>();
     wifiName = configJSON["wifi_name"].as<String>();
     wifiPassword = configJSON["wifi_password"].as<String>();
-    sleepDuration = configJSON["sleep_duration"].as<uint32_t>() * 1e6;
+    sleepDuration = configJSON["sleep_duration"].as<uint32_t>();
 
-    configFile.close();
     return true;
 };
 

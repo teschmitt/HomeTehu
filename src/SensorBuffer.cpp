@@ -9,16 +9,18 @@
 SensorBuffer::SensorBuffer(fs::FS &fs) : _fs{fs}
 {
     _bufferExists = _fs.exists(_bufferPath);
-
-    File offsetFile = _fs.open(_lastOffsetPath, "r");
-    if (!offsetFile || offsetFile.isDirectory())
+    if (_bufferExists)
     {
-        // Serial.println("ERROR: Couldn't open file with last offset. Got a big bad error!");
-        // TODO: Handle errors
+        File offsetFile = _fs.open(_lastOffsetPath, "r");
+        if (!offsetFile || offsetFile.isDirectory())
+        {
+            // Serial.println("ERROR: Couldn't open file with last offset. Got a big bad error!");
+            // TODO: Handle errors
+        }
+        if (offsetFile.available())
+            _lastOffset = offsetFile.parseInt();
+        offsetFile.close();
     }
-    if (offsetFile.available())
-        _lastOffset = offsetFile.parseInt();
-    offsetFile.close();
 }
 
 SensorBuffer::~SensorBuffer()
@@ -30,35 +32,54 @@ const bool SensorBuffer::bufferExists()
     return _bufferExists;
 }
 
-const bool SensorBuffer::read()
+const DynamicJsonDocument SensorBuffer::getBuffer()
 {
+    DynamicJsonDocument res(4096);
     if (_bufferExists)
     {
-        File logFile = _fs.open(_bufferPath, "r");
-        if (!logFile)
+        File bufferFile = _fs.open(_bufferPath, "r");
+        if (!bufferFile)
         {
             Serial.println("ERROR: Couldn't open sensor buffer file. Got a big bad error!");
             // TODO: Handle errors
         }
 
-        DynamicJsonDocument logDoc(8192);
-        DeserializationError e = deserializeJson(logDoc, logFile);
-        logFile.close();
-
-        if (e)
+        while (true)
         {
-            Serial.println("ERROR: Deserialization. Got a big bad error!");
-            // TODO Error handling
+            StaticJsonDocument<256> doc;
+
+            DeserializationError err = deserializeJson(doc, bufferFile);
+            if (err)
+                break;
+
+            res.add(doc);
         }
+        bufferFile.close();
     }
-    else
-    {
-        return false;
-    }
+    return res;
 }
 
-const bool SensorBuffer::append(String entry)
+
+/**
+ * Augment a sensor buffer entry with current offset and append to persistent storage.
+ *
+ * @param doc JSON Object that is to be appended.
+ * @param offset Offset that dates this sensor data
+ * @return true if operation was successful
+ */
+const bool SensorBuffer::append(DynamicJsonDocument &doc, uint32_t offset)
 {
+    File bufferFile = _fs.open(_bufferPath, "a");
+    if (!bufferFile)
+    {
+        Serial.println("ERROR: Couldn't open sensor buffer file. Got a big bad error!");
+        // TODO: Handle errors
+    }
+    doc["offset"] = offset;
+    serializeJson(doc, bufferFile);
+    bufferFile.println();
+    bufferFile.close();
+    return true;
 }
 
 const uint32_t SensorBuffer::getLastOffset()

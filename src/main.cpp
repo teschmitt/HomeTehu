@@ -25,6 +25,7 @@
 // HomeTehu library imports
 #include "Configuration.hpp"
 #include "Sensor.hpp"
+#include "SensorBuffer.hpp"
 
 using namespace std;
 
@@ -33,7 +34,8 @@ const bool connectToMQTT(PubSubClient &c);
 const bool connectToWifi();
 void mqttSubCallback(char *topic, uint8_t *payload, uint16_t length);
 
-Configuration config;
+Configuration config(LittleFS);
+SensorBuffer buf(LittleFS);
 PubSubClient mqttClient;
 Sensor sensor;
 WiFiClient wifiClient;
@@ -108,7 +110,7 @@ void setup()
   /* Send data to server ------------------------------------------------------------------------------------ */
   if (_offlineMode)
   {
-    // write to log
+    // write to buffer
   }
   else
   {
@@ -127,6 +129,10 @@ void setup()
           (baseTopic + "humidity").c_str(),
           String(humidity).c_str());
 
+      if (buf.bufferExists()) {
+        // send all buffered data to server as well
+      }
+
       delay(500); // without delay MQTT messages sometimes don't go through before shutdown
     }
   }
@@ -140,8 +146,8 @@ void setup()
     WiFi.disconnect();
 
   Serial.print("Going to sleep for: ");
-  Serial.println(config.getSleepDuration());
-  ESP.deepSleep(config.getSleepDuration());
+  Serial.println(config.getSleepDuration() + " seconds");
+  ESP.deepSleep(config.getSleepDuration() * 1e6);
 }
 
 void loop() {}
@@ -183,14 +189,9 @@ const bool connectToWifi()
     delay(250);
     if ((millis() - _startTime) / 1000 >= config.getWifiTimeout())
       _timedout = true;
-    // Serial.print(++i);
-    // Serial.print(' ');
-    // TODO: Set timeout and go back to sleep if not successful
   }
   if (_timedout)
-  {
     Serial.println("WARNING: Wifi connection failed, running in offline mode.");
-  }
   else
   {
     Serial.print("WiFi connected - IP address: ");
