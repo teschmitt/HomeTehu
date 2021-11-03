@@ -19,7 +19,8 @@
 #endif
 #include <LittleFS.h>
 
-#include <PubSubClient.h>
+#include <AsyncMqttClient.h>
+#include <Ticker.h>
 #include <WiFiUdp.h>
 
 // HomeTehu library imports
@@ -30,15 +31,26 @@
 using namespace std;
 
 const bool convertToJson(const tm &src, JsonVariant dst);
-const bool connectToMQTT(PubSubClient &c);
 const bool connectToWifi();
-void mqttSubCallback(char *topic, uint8_t *payload, uint16_t length);
+
+/* Callback hell: */
+void onWifiConnect(const WiFiEventStationModeGotIP &event);
+void onWifiDisconnect(const WiFiEventStationModeDisconnected &event);
+void mqttMsgCallback(char *topic, char *payload, AsyncMqttClientMessageProperties properties, size_t len, size_t index, size_t total);
+void onMqttPublish(uint16_t packetId);
+void connectToMqtt();
+
+AsyncMqttClient mqttClient;
+Ticker mqttReconnectTimer;
+
+WiFiEventHandler wifiConnectHandler;
+WiFiEventHandler wifiDisconnectHandler;
+Ticker wifiReconnectTimer;
 
 Configuration config(LittleFS);
 SensorBuffer buf(LittleFS);
-PubSubClient mqttClient;
+
 Sensor sensor;
-WiFiClient wifiClient;
 
 /* If any of the connection steps fail (WiFi, MQTT, …), _offlineMode
  * will be toggled to true and sensor read data will be cached in a
@@ -49,25 +61,20 @@ bool _offlineMode = false;
 void setup()
 {
   Serial.begin(115200);
+  randomSeed(micros());
+
   Serial.println("Hello there, welcome to HomeTehu Station!");
 
   /* Mount cute little filesystem --------------------------------------------------------------------------- */
-
-  randomSeed(micros());
   // TODO: perform begin in while loop and timeout after a while
   if (LittleFS.begin())
   {
-    Serial.println("Dateisystem: initialisiert");
+    Serial.println("LittleFS: Initialized");
   }
   else
   {
-    Serial.println("Dateisystem: Fehler beim initialisieren");
+    Serial.println("LittleFS: Failed to initialize");
   }
-
-  /* Start building run protocol ---------------------------------------------------------------------------- */
-
-  DynamicJsonDocument runLogPayload(1024);
-  runLogPayload["status"] = "running";
 
   /* Read configuration from local filesystem --------------------------------------------------------------- */
 
@@ -76,26 +83,30 @@ void setup()
   /* Set up sensor ------------------------------------------------------------------------------------------ */
   sensor.setGIOPort(config.getSensorGPIOPort());
 
+  /* Set up MQTT connection --------------------------------------------------------------------------------- */
+  String baseTopic = "/" + config.getStationName() + "/" + config.getSensorType() + "/";
+
+  // mqttClient.onConnect(onMqttConnect);
+  // mqttClient.onDisconnect(onMqttDisconnect);
+  // mqttClient.onSubscribe(onMqttSubscribe);
+  // mqttClient.onUnsubscribe(onMqttUnsubscribe);
+  mqttClient.onMessage(mqttMsgCallback);
+  mqttClient.onPublish(onMqttPublish);
+
+  mqttClient.setServer(config.getMQTTHost(), config.getMQTTPort());
+
   /* Connect to wifi  --------------------------------------------------------------------------------------- */
+
+  wifiConnectHandler = WiFi.onStationModeGotIP(onWifiConnect);
+  wifiDisconnectHandler = WiFi.onStationModeDisconnected(onWifiDisconnect);
 
   if (!connectToWifi())
   {
     _offlineMode = true;
-    runLogPayload["wifi_mode"] = "offline";
   }
   else
   {
-    runLogPayload["wifi_mode"] = "online";
-  }
-
-  /* Set up MQTT connection --------------------------------------------------------------------------------- */
-  String baseTopic = "/" + config.getStationName() + "/" + config.getSensorType() + "/";
-  if (!_offlineMode)
-  {
-    mqttClient.setClient(wifiClient);
-    mqttClient.setServer(config.getMQTTHost(), config.getMQTTPort());
-    mqttClient.setBufferSize(1024);
-    mqttClient.setCallback(mqttSubCallback);
+    //
   }
 
   /* Read sensor data --------------------------------------------------------------------------------------- */
@@ -104,8 +115,6 @@ void setup()
 
   Serial.println("Humidity: " + (String)humidity);
   Serial.println("Temperature : " + (String)temperature);
-  runLogPayload["sensor_reading"]["temperature"] = temperature;
-  runLogPayload["sensor_reading"]["humidity"] = humidity;
 
   /* Send data to server ------------------------------------------------------------------------------------ */
   if (_offlineMode)
@@ -114,34 +123,27 @@ void setup()
   }
   else
   {
-    bool _mqttOffline = !connectToMQTT(mqttClient);
-    if (_mqttOffline)
+    /*
+    mqttClient.publish();
+        mqttClient.publish(
+            (baseTopic + "temperature").c_str(),
+            String(temperature).c_str());
+    mqttClient.publish(
+        (baseTopic + "humidity").c_str(),
+        String(humidity).c_str());
+    */
+   
+    if (buf.bufferExists())
     {
-      runLogPayload["mqtt_mode"] = "offline";
+      // send all buffered data to server as well
     }
-    else
-    {
-      runLogPayload["mqtt_mode"] = "online";
-      mqttClient.publish(
-          (baseTopic + "temperature").c_str(),
-          String(temperature).c_str());
-      mqttClient.publish(
-          (baseTopic + "humidity").c_str(),
-          String(humidity).c_str());
 
-      if (buf.bufferExists()) {
-        // send all buffered data to server as well
-      }
-
-      delay(500); // without delay MQTT messages sometimes don't go through before shutdown
-    }
+    delay(500); // without delay MQTT messages sometimes don't go through before shutdown
   }
-  /* 9. Backups an Server schicken -------------------------------------------------------------------------- */
 
-  String runLogPayloadSerialized;
-  serializeJson(runLogPayload, runLogPayloadSerialized);
+  /* Backups an Server schicken -------------------------------------------------------------------------- */
 
-  /* 11. Sleep anfangen mit Intervall in Konfiguration ------------------------------------------------------ */
+  /* Sleep anfangen mit Intervall in Konfiguration ------------------------------------------------------ */
   if (!_offlineMode)
     WiFi.disconnect();
 
@@ -151,27 +153,6 @@ void setup()
 }
 
 void loop() {}
-
-const bool connectToMQTT(PubSubClient &c)
-{
-  Serial.println("Connecting to MQTT broker at " + config.getMQTTHost().toString() + ":" + config.getMQTTPort() + " ... ");
-  while (!c.connected())
-  {
-    if (c.connect(config.getStationName().c_str()))
-    {
-      Serial.println("Connected to MQTT");
-    }
-    else
-    {
-      Serial.print("failed, rc=");
-      Serial.print(c.state());
-      Serial.println(" try again in 5 seconds");
-      // Wait 5 seconds before retrying
-      delay(5000);
-    }
-  }
-  return c.connected();
-}
 
 const bool connectToWifi()
 {
@@ -209,14 +190,47 @@ const bool convertToJson(const tm &src, JsonVariant dst)
   return dst.set(buf);
 }
 
-void mqttSubCallback(char *topic, uint8_t *payload, uint16_t length)
+void onWifiConnect(const WiFiEventStationModeGotIP &event)
 {
-  Serial.print("Message arrived [");
-  Serial.print(topic);
-  Serial.print("] ");
-  for (uint16_t i = 0; i < length; i++)
-  {
-    Serial.print((char)payload[i]);
-  }
-  Serial.println();
+  Serial.println("Connected to Wi-Fi.");
+  connectToMqtt();
+}
+
+void onWifiDisconnect(const WiFiEventStationModeDisconnected &event)
+{
+  Serial.println("Disconnected from Wi-Fi.");
+  mqttReconnectTimer.detach(); // ensure we don't reconnect to MQTT while reconnecting to Wi-Fi
+  wifiReconnectTimer.once(2, connectToWifi);
+}
+
+void connectToMqtt()
+{
+  Serial.println("Connecting to MQTT...");
+  mqttClient.connect();
+}
+
+void mqttMsgCallback(char *topic, char *payload, AsyncMqttClientMessageProperties properties, size_t length, size_t index, size_t total)
+{
+  Serial.println("Publish received.");
+  Serial.print("  topic: ");
+  Serial.println(topic);
+  Serial.print("  qos: ");
+  Serial.println(properties.qos);
+  Serial.print("  dup: ");
+  Serial.println(properties.dup);
+  Serial.print("  retain: ");
+  Serial.println(properties.retain);
+  Serial.print("  len: ");
+  Serial.println(length);
+  Serial.print("  index: ");
+  Serial.println(index);
+  Serial.print("  total: ");
+  Serial.println(total);
+}
+
+void onMqttPublish(uint16_t packetId)
+{
+  Serial.println("Publish acknowledged.");
+  Serial.print("  packetId: ");
+  Serial.println(packetId);
 }
