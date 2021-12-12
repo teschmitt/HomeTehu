@@ -31,7 +31,7 @@
 using namespace std;
 
 const bool convertToJson(const tm &src, JsonVariant dst);
-const bool connectToWifi();
+void connectToWifi();
 
 /* Callback hell: */
 void onWifiConnect(const WiFiEventStationModeGotIP &event);
@@ -99,15 +99,8 @@ void setup()
 
   wifiConnectHandler = WiFi.onStationModeGotIP(onWifiConnect);
   wifiDisconnectHandler = WiFi.onStationModeDisconnected(onWifiDisconnect);
+  connectToWifi();
 
-  if (!connectToWifi())
-  {
-    _offlineMode = true;
-  }
-  else
-  {
-    //
-  }
 
   /* Read sensor data --------------------------------------------------------------------------------------- */
   const float humidity = sensor.getHumidity();
@@ -122,17 +115,17 @@ void setup()
     // write to buffer
   }
   else
+
+  
   {
-    /*
-    mqttClient.publish();
-        mqttClient.publish(
-            (baseTopic + "temperature").c_str(),
-            String(temperature).c_str());
     mqttClient.publish(
-        (baseTopic + "humidity").c_str(),
+        (baseTopic + "temperature").c_str(), 1, true,
+        String(temperature).c_str());
+    mqttClient.publish(
+        (baseTopic + "humidity").c_str(), 1, true,
         String(humidity).c_str());
-    */
-   
+  
+
     if (buf.bufferExists())
     {
       // send all buffered data to server as well
@@ -154,7 +147,7 @@ void setup()
 
 void loop() {}
 
-const bool connectToWifi()
+void connectToWifi()
 {
   bool _timedout = false;
   unsigned long _startTime = millis();
@@ -178,7 +171,6 @@ const bool connectToWifi()
     Serial.print("WiFi connected - IP address: ");
     Serial.println(WiFi.localIP());
   }
-  return (WiFi.status() == WL_CONNECTED);
 }
 
 // converting a struct tm to a JSON entry:
@@ -193,12 +185,14 @@ const bool convertToJson(const tm &src, JsonVariant dst)
 void onWifiConnect(const WiFiEventStationModeGotIP &event)
 {
   Serial.println("Connected to Wi-Fi.");
+  _offlineMode = false;
   connectToMqtt();
 }
 
 void onWifiDisconnect(const WiFiEventStationModeDisconnected &event)
 {
   Serial.println("Disconnected from Wi-Fi.");
+  _offlineMode = true;
   mqttReconnectTimer.detach(); // ensure we don't reconnect to MQTT while reconnecting to Wi-Fi
   wifiReconnectTimer.once(2, connectToWifi);
 }
