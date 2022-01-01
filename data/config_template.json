@@ -1,6 +1,13 @@
 {
+    "debug": true,
+    "mqtt_host": "",
+    "mqtt_port": 1883,
+    "publish_timeout": 15,
+    "sensor_gpioport": 5,
+    "sensor_type": "",
     "sleep_duration": 300,
     "station_name": "",
     "wifi_name": "",
-    "wifi_password": ""
+    "wifi_password": "#",
+    "wifi_timeout": 60
 }
