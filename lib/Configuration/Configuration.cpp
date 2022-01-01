@@ -42,6 +42,7 @@ const bool Configuration::read()
 
     MQTTPort = configJSON["mqtt_port"];
     wifiTimeout = configJSON["wifi_timeout"].as<uint16_t>();
+    publishTimeout = configJSON["publish_timeout"].as<uint16_t>();
     sensorGPIOPort = configJSON["sensor_gpioport"];
     sensorType = configJSON["sensor_type"].as<String>();
     stationName = configJSON["station_name"].as<String>();
