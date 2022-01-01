@@ -33,6 +33,8 @@ using namespace std;
 const bool convertToJson(const tm &src, JsonVariant dst);
 void connectToWifi();
 
+uint16_t _publish(const char *suffix, String msg);
+
 /* Callback hell: */
 void onWifiConnect(const WiFiEventStationModeGotIP &event);
 void onWifiDisconnect(const WiFiEventStationModeDisconnected &event);
@@ -42,6 +44,7 @@ void connectToMqtt();
 
 AsyncMqttClient mqttClient;
 Ticker mqttReconnectTimer;
+uint16_t unackedPubs;
 
 WiFiEventHandler wifiConnectHandler;
 WiFiEventHandler wifiDisconnectHandler;
@@ -65,26 +68,17 @@ void setup()
 
   Serial.println("Hello there, welcome to HomeTehu Station!");
 
-  /* Mount cute little filesystem --------------------------------------------------------------------------- */
-  // TODO: perform begin in while loop and timeout after a while
   if (LittleFS.begin())
-  {
     Serial.println("LittleFS: Initialized");
-  }
   else
-  {
     Serial.println("LittleFS: Failed to initialize");
-  }
-
-  /* Read configuration from local filesystem --------------------------------------------------------------- */
 
   config.read();
 
-  /* Set up sensor ------------------------------------------------------------------------------------------ */
   sensor.setGIOPort(config.getSensorGPIOPort());
 
-  /* Set up MQTT connection --------------------------------------------------------------------------------- */
   String baseTopic = "/" + config.getStationName() + "/" + config.getSensorType() + "/";
+  unackedPubs = 0;
 
   // mqttClient.onConnect(onMqttConnect);
   // mqttClient.onDisconnect(onMqttDisconnect);
@@ -95,50 +89,56 @@ void setup()
 
   mqttClient.setServer(config.getMQTTHost(), config.getMQTTPort());
 
-  /* Connect to wifi  --------------------------------------------------------------------------------------- */
-
   wifiConnectHandler = WiFi.onStationModeGotIP(onWifiConnect);
   wifiDisconnectHandler = WiFi.onStationModeDisconnected(onWifiDisconnect);
   connectToWifi();
 
-
-  /* Read sensor data --------------------------------------------------------------------------------------- */
   const float humidity = sensor.getHumidity();
   const float temperature = sensor.getTemperature();
 
-  Serial.println("Humidity: " + (String)humidity);
-  Serial.println("Temperature : " + (String)temperature);
+  /* We have big plans here: Connecting to wifi and getting the sensor data should happen
+   * async, then we need a barrier to wait for all connections to be established and the
+   * sensor data to be available and first then publish it or buffer it if there are
+   * connectivity issues.
+   * There is a lot of busy waiting and not much error checking right now, but this should
+   * be fixed in the future.
+   * Helfpul for the necessary timeouts involved: https://stackoverflow.com/a/40551227
+  **/
 
-  /* Send data to server ------------------------------------------------------------------------------------ */
+  /* Send data to server */
   if (_offlineMode)
   {
     // write to buffer
   }
   else
-
-  
   {
-    mqttClient.publish(
-        (baseTopic + "temperature").c_str(), 1, true,
-        String(temperature).c_str());
-    mqttClient.publish(
-        (baseTopic + "humidity").c_str(), 1, true,
-        String(humidity).c_str());
-  
+    _publish("temperature", (String)temperature);
+    _publish("humidity", (String)humidity);
+
+    String log = String("Going to sleep for ") + (String)config.getSleepDuration() + (String) " seconds";
+    _publish("log", log);
 
     if (buf.bufferExists())
     {
       // send all buffered data to server as well
     }
-
-    delay(500); // without delay MQTT messages sometimes don't go through before shutdown
   }
 
-  /* Backups an Server schicken -------------------------------------------------------------------------- */
-
-  /* Sleep anfangen mit Intervall in Konfiguration ------------------------------------------------------ */
   if (!_offlineMode)
+  {
+    bool _timedout = false;
+    unsigned long _startTime = millis();
+    while (unackedPubs > 0 && !_timedout)
+    {
+      delay(250);
+      if ((millis() - _startTime) / 1000 >= config.getPublishTimeout())
+        _timedout = true;
+    }
+    if (_timedout)
+      Serial.println("One or more publishes remain unACKed");
+
     WiFi.disconnect();
+  }
 
   Serial.print("Going to sleep for: ");
   Serial.println(config.getSleepDuration() + " seconds");
@@ -151,11 +151,7 @@ void connectToWifi()
 {
   bool _timedout = false;
   unsigned long _startTime = millis();
-  // WiFi.mode(WIFI_OFF); //Prevents reconnection issue (taking too long to connect)
-  // delay(1000);
-  WiFi.mode(WIFI_STA); //This line hides the viewing of ESP as wifi hotspot
-  Serial.println("Connecting to:");
-  Serial.println(config.getWifiName());
+  WiFi.mode(WIFI_STA); // only station mode
   WiFi.begin(config.getWifiName(), config.getWifiPassword());
 
   while ((WiFi.status() != WL_CONNECTED) && !_timedout)
@@ -194,7 +190,7 @@ void onWifiDisconnect(const WiFiEventStationModeDisconnected &event)
   Serial.println("Disconnected from Wi-Fi.");
   _offlineMode = true;
   mqttReconnectTimer.detach(); // ensure we don't reconnect to MQTT while reconnecting to Wi-Fi
-  wifiReconnectTimer.once(2, connectToWifi);
+  // wifiReconnectTimer.once(2, connectToWifi);
 }
 
 void connectToMqtt()
@@ -227,4 +223,14 @@ void onMqttPublish(uint16_t packetId)
   Serial.println("Publish acknowledged.");
   Serial.print("  packetId: ");
   Serial.println(packetId);
+  unackedPubs--;
+}
+
+uint16_t _publish(const char *suffix, String msg)
+{
+  unackedPubs++;
+  Serial.println("suffix: " + (String)suffix + " -- msg: " + msg + " -- unacked: " + unackedPubs);
+  return mqttClient.publish(
+      ("/" + config.getStationName() + "/" + config.getSensorType() + "/" + suffix).c_str(), 1, true,
+      msg.c_str());
 }
