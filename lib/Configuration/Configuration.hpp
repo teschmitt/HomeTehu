@@ -17,6 +17,7 @@ private:
 
     // all durations are specified in seconds
     uint16_t wifiTimeout = 60;
+    uint16_t publishTimeout = 15;
     uint64_t sleepDuration = 300;
 
 public:
@@ -36,4 +37,5 @@ public:
     const uint64_t getSleepDuration() const { return sleepDuration; }
     const unsigned int getSensorGPIOPort() const { return sensorGPIOPort; }
     const uint16_t getWifiTimeout() const { return wifiTimeout; }
+    const uint16_t getPublishTimeout() const { return publishTimeout; }
 };
